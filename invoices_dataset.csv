@@ -1,0 +1,9 @@
+customer_name,company_name,email,amount,currency,due_date,risk_score,invoice_number
+Aarav Patel,Apex Logistics Ltd,aarav.patel@apexlogistics.in,145000,₹,2026-08-10,88,INV-3011
+Sneha Reddy,Starlight Media,sneha.reddy@starlight.io,62000,₹,2026-08-01,65,INV-3012
+Devendra Roy,Roy Electronics,devendra@royelec.com,320000,₹,2026-07-15,94,INV-3013
+Pooja Sharma,Zenith Retail Co,pooja.sharma@zenithretail.co,48000,₹,2026-08-18,32,INV-3014
+Karan Kapoor,Kapoor Infra Solutions,karan@kapoorinfra.in,210000,₹,2026-07-25,81,INV-3015
+Ananya Deshmukh,Saffron Organic Foods,ananya@saffronfoods.com,95000,₹,2026-08-05,55,INV-3016
+Vikram Verma,Verma & Sons Hardware,vikram@vermahwd.com,180000,₹,2026-06-30,91,INV-3017
+Meera Nambiar,Nambiar Creative Agency,meera@nambiardesign.com,35000,₹,2026-08-20,28,INV-3018
