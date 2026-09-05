@@ -1,189 +1,186 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { X, Send, Sparkles, Loader2 } from 'lucide-react';
+import { useState } from 'react';
 
-interface ReminderModalProps {
+export interface ReminderModalProps {
   isOpen: boolean;
   onClose: () => void;
   invoice: any;
+  onDispatchSuccess: () => void;
 }
 
-export default function ReminderModal({ isOpen, onClose, invoice }: ReminderModalProps) {
-  const [stage, setStage] = useState<'polite_nudge' | 'firm_reminder' | 'urgent_escalation'>('polite_nudge');
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
+export default function ReminderModal({
+  isOpen,
+  onClose,
+  invoice,
+  onDispatchSuccess,
+}: ReminderModalProps) {
+  const [tone, setTone] = useState<'friendly' | 'firm' | 'urgent'>('friendly');
+  const [generatedEmail, setGeneratedEmail] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  useEffect(() => {
-    if (invoice && isOpen) {
-      let initialStage: 'polite_nudge' | 'firm_reminder' | 'urgent_escalation' = 'polite_nudge';
-      
-      if (invoice.risk_score > 75) {
-        initialStage = 'urgent_escalation';
-      } else if (invoice.risk_score > 40) {
-        initialStage = 'firm_reminder';
-      }
-      
-      setStage(initialStage);
-      generateDraft(initialStage);
-    }
-  }, [invoice, isOpen]);
+  if (!isOpen || !invoice) return null;
 
-  const generateDraft = async (selectedStage: string) => {
-    if (!invoice) return;
-    setLoading(true);
+  // 1. Generate AI Reminder via Gemini API
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    setStatusMessage(null);
     try {
       const res = await fetch('/api/generate-reminder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerName: invoice.customer_name,
-          companyName: invoice.company_name,
-          invoiceNumber: invoice.invoice_number,
+          clientName: invoice.client_name,
           amount: invoice.amount,
-          currency: invoice.currency || '₹',
           dueDate: invoice.due_date,
-          stage: selectedStage,
+          invoiceNumber: invoice.invoice_number,
+          tone,
         }),
       });
 
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch (parseErr) {
-        console.warn('API returned non-JSON string, falling back.', parseErr);
-      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to generate reminder');
 
-      setSubject(data.subject || `Payment Reminder: Invoice #${invoice.invoice_number}`);
-      setBody(
-        data.body ||
-          `Dear ${invoice.customer_name || 'Valued Client'},\n\nThis is a gentle reminder regarding your outstanding invoice #${invoice.invoice_number || 'N/A'} for ${invoice.currency || '₹'}${invoice.amount || '0'}.\n\nPlease settle this at your earliest convenience.\n\nBest regards,\nAccounts Team`
-      );
-    } catch (err) {
-      console.error('Failed to generate draft:', err);
-      setSubject(`Payment Reminder: Invoice #${invoice.invoice_number}`);
-      setBody(
-        `Dear ${invoice.customer_name || 'Valued Client'},\n\nThis is a payment reminder for your invoice #${invoice.invoice_number || 'N/A'}.\n\nThank you.`
-      );
+      setGeneratedEmail(data.emailBody);
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message || 'Error generating email' });
     } finally {
-      setLoading(false);
+      setIsGenerating(false);
     }
   };
 
-  const handleSend = async () => {
-    setSending(true);
+  // 2. Dispatch Email via Resend API
+  const handleSendEmail = async () => {
+    if (!generatedEmail) return;
+    setIsSending(true);
+    setStatusMessage(null);
+
     try {
       const res = await fetch('/api/send-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          recipientEmail: invoice.client_email,
+          clientName: invoice.client_name,
+          invoiceNumber: invoice.invoice_number,
+          emailBody: generatedEmail,
           invoiceId: invoice.id,
-          toEmail: invoice.to_email || 'client@example.com',
-          subject,
-          body,
-          stage,
         }),
       });
 
-      if (res.ok) {
-        alert(`Reminder successfully sent to ${invoice.customer_name}!`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send email');
+
+      setStatusMessage({ type: 'success', text: 'Email dispatched successfully!' });
+      
+      // Notify parent page to refresh invoice list/status
+      onDispatchSuccess();
+
+      // Automatically close modal after 1.5 seconds
+      setTimeout(() => {
         onClose();
-      } else {
-        alert('Reminder queued and logged locally.');
-        onClose();
-      }
-    } catch (e) {
-      alert(`Reminder dispatched to ${invoice.customer_name}`);
-      onClose();
+        setStatusMessage(null);
+        setGeneratedEmail('');
+      }, 1500);
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message || 'Error sending email' });
     } finally {
-      setSending(false);
+      setIsSending(false);
     }
   };
 
-  if (!isOpen || !invoice) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl dark:bg-slate-900 dark:text-white">
         {/* Header */}
-        <div className="flex justify-between items-center pb-4 border-b border-zinc-800">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-cyan-400" />
-            <h2 className="text-lg font-semibold text-white">AI Reminder Copilot</h2>
+        <div className="flex items-center justify-between border-b pb-4 dark:border-slate-800">
+          <div>
+            <h3 className="text-xl font-bold">Generate AI Reminder</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Invoice #{invoice.invoice_number} — {invoice.client_name}
+            </p>
           </div>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white transition">
-            <X className="w-5 h-5" />
+          <button
+            onClick={onClose}
+            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800"
+          >
+            ✕
           </button>
         </div>
 
-        {/* Tone Selection */}
-        <div className="mt-4 flex gap-2">
-          {(['polite_nudge', 'firm_reminder', 'urgent_escalation'] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => {
-                setStage(s);
-                generateDraft(s);
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize border transition-all ${
-                stage === s
-                  ? 'bg-cyan-500/10 border-cyan-500 text-cyan-400'
-                  : 'bg-zinc-800/60 border-zinc-700 text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              {s.replace('_', ' ')}
-            </button>
-          ))}
+        {/* Tone Selector */}
+        <div className="mt-4">
+          <label className="block text-sm font-medium mb-2">Select Communication Tone</label>
+          <div className="grid grid-cols-3 gap-3">
+            {(['friendly', 'firm', 'urgent'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTone(t)}
+                className={`rounded-lg border py-2 px-4 text-sm font-medium capitalize transition ${
+                  tone === t
+                    ? 'border-indigo-600 bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400'
+                    : 'border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-slate-800 dark:text-gray-300 dark:hover:bg-slate-800'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Draft Editor Form */}
-        <div className="mt-4 space-y-3">
-          {loading ? (
-            <div className="h-48 flex flex-col items-center justify-center text-zinc-400 gap-2">
-              <Loader2 className="w-6 h-6 animate-spin text-cyan-400" />
-              <p className="text-sm">Gemini is drafting your message...</p>
-            </div>
-          ) : (
-            <>
-              <div>
-                <label className="text-xs text-zinc-400 font-medium">Subject</label>
-                <input
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  className="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-zinc-400 font-medium">Email Content</label>
-                <textarea
-                  rows={6}
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  className="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 font-sans"
-                />
-              </div>
-            </>
-          )}
+        {/* Generate Button */}
+        <div className="mt-4">
+          <button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {isGenerating ? 'Drafting with Gemini AI...' : 'Generate Email Draft'}
+          </button>
         </div>
+
+        {/* Draft Area */}
+        {generatedEmail && (
+          <div className="mt-4">
+            <label className="block text-sm font-medium mb-1">Generated Draft</label>
+            <textarea
+              rows={6}
+              value={generatedEmail}
+              onChange={(e) => setGeneratedEmail(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 p-3 text-sm text-gray-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+        )}
+
+        {/* Status Message */}
+        {statusMessage && (
+          <div
+            className={`mt-4 rounded-lg p-3 text-sm font-medium ${
+              statusMessage.type === 'success'
+                ? 'bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-400'
+                : 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-400'
+            }`}
+          >
+            {statusMessage.text}
+          </div>
+        )}
 
         {/* Action Buttons */}
-        <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-zinc-800">
+        <div className="mt-6 flex justify-end gap-3 border-t pt-4 dark:border-slate-800">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition"
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:text-gray-300 dark:hover:bg-slate-800"
           >
             Cancel
           </button>
           <button
-            onClick={handleSend}
-            disabled={loading || sending}
-            className="flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-zinc-950 font-medium text-sm rounded-lg transition"
+            onClick={handleSendEmail}
+            disabled={!generatedEmail || isSending}
+            className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 disabled:opacity-50"
           >
-            {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            Approve & Dispatch
+            {isSending ? 'Sending Via Resend...' : 'Dispatch Email'}
           </button>
         </div>
       </div>
